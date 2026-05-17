@@ -1,0 +1,45 @@
+# Built application files
+*.apk
+*.aab
+*.ap_
+*.aapt
+*.app
+*.ipa
+
+# Local configuration file (sdk path, etc)
+local.properties
+.env
+.env.*
+
+# Gradle files
+.gradle/
+build/
+*/build/
+gradle-app.setting
+!gradle-wrapper.jar
+
+# IDE files
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Eclipse project files
+.classpath
+.project
+.settings/
+
+# OS specific files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Kotlin
+*.kotlin_module
+
+# Scripts
+release.sh
