@@ -16,6 +16,33 @@ android {
         versionName = "1.0.2"
     }
 
+    // Load local.properties if it exists
+    val localProperties = java.util.Properties()
+    val localPropertiesFile = rootProject.file("local.properties")
+    if (localPropertiesFile.exists()) {
+        localPropertiesFile.inputStream().use { localProperties.load(it) }
+    }
+
+    signingConfigs {
+        create("release") {
+            val envKeystorePath = System.getenv("RELEASE_STORE_FILE")
+            if (envKeystorePath != null) {
+                storeFile = file(envKeystorePath)
+                storePassword = System.getenv("RELEASE_STORE_PASSWORD")
+                keyAlias = System.getenv("RELEASE_KEY_ALIAS")
+                keyPassword = System.getenv("RELEASE_KEY_PASSWORD")
+            } else {
+                val keystorePath = localProperties.getProperty("release.keystore")
+                if (keystorePath != null) {
+                    storeFile = file(keystorePath)
+                    storePassword = localProperties.getProperty("release.keystore.password")
+                    keyAlias = localProperties.getProperty("release.key.alias")
+                    keyPassword = localProperties.getProperty("release.key.password")
+                }
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
@@ -23,6 +50,7 @@ android {
                     getDefaultProguardFile("proguard-android-optimize.txt"),
                     "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 
