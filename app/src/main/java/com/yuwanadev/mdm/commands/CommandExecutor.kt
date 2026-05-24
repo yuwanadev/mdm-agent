@@ -92,6 +92,25 @@ class CommandExecutor(private val context: Context, private val wsManager: WebSo
         Log.i(TAG, "Sent device info: ${info.model}")
     }
 
+    /** Send list of accounts to the server. */
+    fun sendDeviceAccounts() {
+        try {
+            val accountManager = android.accounts.AccountManager.get(context)
+            val accounts = accountManager.accounts
+            val payloadList = accounts.map { DeviceAccountPayload(it.name, it.type) }
+            val payload = json.encodeToJsonElement(payloadList)
+            val message = WSMessage(
+                type = AgentMessageType.DEVICE_ACCOUNTS,
+                payload = payload,
+                timestamp = Instant.now().toString()
+            )
+            wsManager.send(message)
+            Log.i(TAG, "Sent ${accounts.size} device accounts")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get device accounts: ${e.message}")
+        }
+    }
+
     /** Send a heartbeat with current device stats. */
     fun sendHeartbeat() {
         val heartbeat = HeartbeatPayload(

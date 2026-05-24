@@ -50,3 +50,12 @@ data class DeviceInfoPayload(
 data class AckPayload(
     @SerialName("device_id") val deviceId: String
 )
+
+/**
+ * DeviceAccountPayload represents an account on the device.
+ */
+@Serializable
+data class DeviceAccountPayload(
+    @SerialName("name") val name: String,
+    @SerialName("type") val type: String
+)

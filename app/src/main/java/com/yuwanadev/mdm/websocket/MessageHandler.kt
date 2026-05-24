@@ -53,6 +53,7 @@ class MessageHandler(
                     }
                 }
                 commandExecutor.sendDeviceInfo()
+                commandExecutor.sendDeviceAccounts()
             }
             "START_MIRROR" -> {
                 Log.i(TAG, "Starting mirror session")
@@ -81,7 +82,19 @@ class MessageHandler(
 
     private fun handleTouchEvent(payload: JsonElement) {
         try {
-            val obj = payload.jsonObject
+            // Handle both direct JsonObject and double-encoded string payload
+            val obj = when {
+                payload is JsonObject -> payload
+                payload is JsonPrimitive && payload.isString -> {
+                    Log.w(TAG, "Touch payload was double-encoded string, re-parsing")
+                    Json.parseToJsonElement(payload.content).jsonObject
+                }
+                else -> {
+                    Log.e(TAG, "Unexpected touch payload type: ${payload::class.simpleName}")
+                    return
+                }
+            }
+
             val action = obj["action"]?.jsonPrimitive?.content ?: "tap"
             val normalizedX = obj["x"]?.jsonPrimitive?.double ?: return
             val normalizedY = obj["y"]?.jsonPrimitive?.double ?: return
@@ -97,22 +110,27 @@ class MessageHandler(
             val x = (normalizedX * screenW).toFloat()
             val y = (normalizedY * screenH).toFloat()
 
+            Log.d(TAG, "Touch event: action=$action normalized=($normalizedX,$normalizedY) screen=($x,$y) display=${screenW}x${screenH}")
+
             when (action) {
                 "tap" -> {
                     Log.d(TAG, "Touch tap at ($x, $y)")
-                    TouchInjectorService.injectTap(x, y)
+                    val result = TouchInjectorService.injectTap(x, y)
+                    Log.d(TAG, "Touch tap result: $result, service available: ${TouchInjectorService.isAvailable()}")
                 }
                 "swipe" -> {
                     val endX = ((obj["end_x"]?.jsonPrimitive?.double ?: normalizedX) * screenW).toFloat()
                     val endY = ((obj["end_y"]?.jsonPrimitive?.double ?: normalizedY) * screenH).toFloat()
                     val duration = obj["duration"]?.jsonPrimitive?.long ?: 300L
                     Log.d(TAG, "Touch swipe ($x,$y) → ($endX,$endY)")
-                    TouchInjectorService.injectSwipe(x, y, endX, endY, duration)
+                    val result = TouchInjectorService.injectSwipe(x, y, endX, endY, duration)
+                    Log.d(TAG, "Touch swipe result: $result, service available: ${TouchInjectorService.isAvailable()}")
                 }
                 "long_press" -> {
                     val duration = obj["duration"]?.jsonPrimitive?.long ?: 800L
                     Log.d(TAG, "Touch long press at ($x, $y)")
-                    TouchInjectorService.injectLongPress(x, y, duration)
+                    val result = TouchInjectorService.injectLongPress(x, y, duration)
+                    Log.d(TAG, "Touch long press result: $result, service available: ${TouchInjectorService.isAvailable()}")
                 }
                 else -> Log.w(TAG, "Unknown touch action: $action")
             }

@@ -23,7 +23,12 @@ class SharedMediaProjectionCapturer(
     private var capturerObserver: CapturerObserver? = null
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
     private var virtualDisplay: VirtualDisplay? = null
+    // Keep a strong reference to prevent GC from releasing the Surface
+    private var surface: Surface? = null
     private var isDisposed = false
+    private var isCapturing = false
+    private var frameCount = 0L
+    private var lastLogTime = 0L
 
     override fun initialize(
         surfaceTextureHelper: SurfaceTextureHelper?,
@@ -43,28 +48,39 @@ class SharedMediaProjectionCapturer(
         Log.i(TAG, "Starting capture: ${width}x${height} @ $framerate FPS")
         surfaceTextureHelper?.setTextureSize(width, height)
         surfaceTextureHelper?.startListening(this)
-        capturerObserver?.onCapturerStarted(true)
         
-        val surface = Surface(surfaceTextureHelper?.surfaceTexture)
+        // Create and retain the Surface so it doesn't get GC'd
+        surface = Surface(surfaceTextureHelper?.surfaceTexture)
         val density = 400 // Standard fallback density
 
         Handler(Looper.getMainLooper()).post {
             try {
+                // Release old virtual display if restarting
+                virtualDisplay?.release()
+                virtualDisplay = null
+                
                 virtualDisplay = mediaProjection.createVirtualDisplay(
                     "WebRTC_Mirror",
                     width, height, density,
                     DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
                     surface, null, null
                 )
+                isCapturing = true
+                frameCount = 0
+                lastLogTime = System.currentTimeMillis()
+                capturerObserver?.onCapturerStarted(true)
                 Log.i(TAG, "VirtualDisplay created successfully")
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to create VirtualDisplay: \${e.message}", e)
+                Log.e(TAG, "Failed to create VirtualDisplay: ${e.message}", e)
+                capturerObserver?.onCapturerStarted(false)
             }
         }
     }
 
     override fun stopCapture() {
-        Log.i(TAG, "Stopping capture")
+        Log.i(TAG, "Stopping capture (delivered $frameCount frames)")
+        isCapturing = false
+
         Handler(Looper.getMainLooper()).post {
             virtualDisplay?.release()
             virtualDisplay = null
@@ -74,13 +90,14 @@ class SharedMediaProjectionCapturer(
     }
 
     override fun changeCaptureFormat(width: Int, height: Int, framerate: Int) {
-        // Ideally we would tear down and recreate the VirtualDisplay with new bounds here
-        // for dynamic rotation/resizing support.
-        Log.i(TAG, "changeCaptureFormat: \${width}x\${height}")
+        Log.i(TAG, "changeCaptureFormat: ${width}x${height}")
     }
 
     override fun dispose() {
         isDisposed = true
+        isCapturing = false
+        surface?.release()
+        surface = null
     }
 
     override fun isScreencast(): Boolean {
@@ -88,8 +105,23 @@ class SharedMediaProjectionCapturer(
     }
 
     override fun onFrame(frame: VideoFrame?) {
-        if (frame != null) {
+        if (frame == null || !isCapturing) return
+        
+        try {
             capturerObserver?.onFrameCaptured(frame)
+            frameCount++
+            
+            // Log frame stats every 10 seconds for diagnostics
+            val now = System.currentTimeMillis()
+            if (now - lastLogTime >= 10_000) {
+                val elapsed = (now - lastLogTime) / 1000.0
+                val fps = frameCount / elapsed
+                Log.d(TAG, "Frame delivery: ${frameCount} frames, ~${"%.1f".format(fps)} fps")
+                frameCount = 0
+                lastLogTime = now
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error forwarding frame: ${e.message}")
         }
     }
 }

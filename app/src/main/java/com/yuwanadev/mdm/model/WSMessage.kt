@@ -12,6 +12,7 @@ object AgentMessageType {
     const val DEVICE_INFO = "DEVICE_INFO"
     const val HEARTBEAT = "STATUS_UPDATE"
     const val ACK = "ACK"
+    const val DEVICE_ACCOUNTS = "DEVICE_ACCOUNTS"
 }
 
 /**

@@ -27,17 +27,34 @@ class WebRTCClient(
     private var surfaceTextureHelper: SurfaceTextureHelper? = null
 
     // For diagnostics & adaptive streaming
-    private var targetWidth = 1280
-    private var targetHeight = 720
+    private var targetWidth = 720
+    private var targetHeight = 1280
     private var targetFps = 30
     private var targetBitrateKbps = 1500
 
     init {
         // Run diagnostics before initializing
         val diagnostics = CodecCapabilityManager.runDiagnostics()
-        targetWidth = diagnostics.maxSupportedWidth.coerceAtMost(1280)
-        targetHeight = diagnostics.maxSupportedHeight.coerceAtMost(720)
         targetBitrateKbps = diagnostics.recommendedBitrateKbps
+
+        // Use the device's actual screen dimensions (preserving orientation)
+        val wm = context.getSystemService(Context.WINDOW_SERVICE) as android.view.WindowManager
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        wm.defaultDisplay.getRealMetrics(metrics)
+        val screenW = metrics.widthPixels
+        val screenH = metrics.heightPixels
+
+        // Scale down proportionally so the larger dimension fits within codec limits
+        val maxDim = diagnostics.maxSupportedWidth.coerceAtMost(1280)
+        val largerDim = maxOf(screenW, screenH)
+        val scale = if (largerDim > maxDim) maxDim.toFloat() / largerDim.toFloat() else 1f
+
+        // Align to multiples of 2 (required by most video encoders)
+        targetWidth = ((screenW * scale).toInt() / 2) * 2
+        targetHeight = ((screenH * scale).toInt() / 2) * 2
+
+        Log.i(TAG, "Screen: ${screenW}x${screenH} → Capture: ${targetWidth}x${targetHeight}")
 
         initializeWebRTC()
     }
@@ -151,14 +168,20 @@ class WebRTCClient(
     }
 
     private fun handleRotation() {
-        Log.i(TAG, "Display rotated, safely restarting video capturer")
-        videoCapturer?.stopCapture()
-        
-        // Wait a short moment for surface bounds to settle
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            // Let the capturer restart with the same requested dims
-            videoCapturer?.startCapture(targetWidth, targetHeight, targetFps)
-        }, 500)
+        Log.i(TAG, "Display rotated, restarting video capturer")
+        // Restart capture - the capturer now handles releasing old VirtualDisplay internally
+        try {
+            videoCapturer?.stopCapture()
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                try {
+                    videoCapturer?.startCapture(targetWidth, targetHeight, targetFps)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to restart capture after rotation: ${e.message}")
+                }
+            }, 300)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error handling rotation: ${e.message}")
+        }
     }
 
     private fun createPeerConnection() {
@@ -173,7 +196,19 @@ class WebRTCClient(
         peerConnection = factory?.createPeerConnection(rtcConfig, object : PeerConnection.Observer {
             override fun onSignalingChange(newState: PeerConnection.SignalingState) {}
             override fun onIceConnectionChange(newState: PeerConnection.IceConnectionState) {
-                Log.i(TAG, "ICE Connection State: \$newState")
+                Log.i(TAG, "ICE Connection State: $newState")
+                when (newState) {
+                    PeerConnection.IceConnectionState.DISCONNECTED -> {
+                        Log.w(TAG, "ICE disconnected — stream may freeze")
+                    }
+                    PeerConnection.IceConnectionState.FAILED -> {
+                        Log.e(TAG, "ICE connection FAILED — stream is broken")
+                    }
+                    PeerConnection.IceConnectionState.CONNECTED -> {
+                        Log.i(TAG, "ICE connected — stream should be flowing")
+                    }
+                    else -> {}
+                }
             }
             override fun onIceConnectionReceivingChange(receiving: Boolean) {}
             override fun onIceGatheringChange(newState: PeerConnection.IceGatheringState) {}

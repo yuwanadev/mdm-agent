@@ -91,15 +91,17 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Check permissions and admin status
-        checkPermissions()
-        checkAdminStatus()
-
         // Start UI update loop
         startDeviceInfoUpdater()
     }
 
-    private fun checkPermissions() {
+    override fun onResume() {
+        super.onResume()
+        checkNextPermission()
+    }
+
+    private fun checkNextPermission() {
+        // 1. Standard Permissions
         val permissions = mutableListOf(
             android.Manifest.permission.ACCESS_FINE_LOCATION,
             android.Manifest.permission.READ_PHONE_STATE
@@ -114,50 +116,25 @@ class MainActivity : AppCompatActivity() {
 
         if (missing.isNotEmpty()) {
             ActivityCompat.requestPermissions(this, missing.toTypedArray(), 100)
-        } else {
-            // Fine location already granted, now request background location
-            requestBackgroundLocationIfNeeded()
+            return
         }
 
-        // Check Usage Stats permission (special setting)
-        checkUsageStatsPermission()
-
-        // Check Overlay permission
-        checkOverlayPermission()
-    }
-
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 100) {
-            // After granting fine location, request background location separately
-            requestBackgroundLocationIfNeeded()
-        }
-    }
-
-    private fun requestBackgroundLocationIfNeeded() {
+        // 2. Background Location
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED &&
-                ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, arrayOf(android.Manifest.permission.ACCESS_BACKGROUND_LOCATION), 101)
+                return
             }
         }
-    }
 
-    private fun checkUsageStatsPermission() {
-        val appOps = getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
-        val mode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
-            appOps.unsafeCheckOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), packageName)
-        } else {
-            appOps.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), packageName)
-        }
-
-        if (mode != android.app.AppOpsManager.MODE_ALLOWED) {
+        // 3. Usage Stats
+        if (!hasUsageStatsPermission()) {
             Toast.makeText(this, "Please enable Usage Access for app monitoring", Toast.LENGTH_LONG).show()
             startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+            return
         }
-    }
 
-    private fun checkOverlayPermission() {
+        // 4. Overlay Permission
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
             if (!Settings.canDrawOverlays(this)) {
                 Toast.makeText(this, "Please enable 'Display over other apps' to allow screen overlays", Toast.LENGTH_LONG).show()
@@ -165,24 +142,65 @@ class MainActivity : AppCompatActivity() {
                     data = android.net.Uri.parse("package:$packageName")
                 }
                 startActivity(intent)
+                return
             }
         }
-    }
 
+        // 5. Accessibility Permission
+        if (!isAccessibilityServiceEnabled()) {
+            Toast.makeText(this, "Please enable Accessibility Service for remote control", Toast.LENGTH_LONG).show()
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            return
+        }
 
-    private fun checkAdminStatus() {
-        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-        val admin = ComponentName(this, MdmDeviceAdminReceiver::class.java)
-        
-        if (!dpm.isAdminActive(admin)) {
+        // 6. Device Admin
+        if (!isDeviceAdminActive()) {
             Toast.makeText(this, "Please enable Device Admin to use all features", Toast.LENGTH_LONG).show()
-            // Optional: Auto-redirect to admin settings
+            val admin = ComponentName(this, MdmDeviceAdminReceiver::class.java)
             val intent = Intent(DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN).apply {
                 putExtra(DevicePolicyManager.EXTRA_DEVICE_ADMIN, admin)
                 putExtra(DevicePolicyManager.EXTRA_ADD_EXPLANATION, "YuwanaDev MDM requires Admin permission to manage device security.")
             }
             startActivity(intent)
+            return
         }
+    }
+
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        checkNextPermission()
+    }
+
+    private fun hasUsageStatsPermission(): Boolean {
+        val appOps = getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
+        val mode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            appOps.unsafeCheckOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), packageName)
+        } else {
+            appOps.checkOpNoThrow(android.app.AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), packageName)
+        }
+        return mode == android.app.AppOpsManager.MODE_ALLOWED
+    }
+
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val expectedComponentName = ComponentName(this, com.yuwanadev.mdm.service.TouchInjectorService::class.java)
+        val enabledServicesSetting = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            ?: return false
+        val colonSplitter = android.text.TextUtils.SimpleStringSplitter(':')
+        colonSplitter.setString(enabledServicesSetting)
+        while (colonSplitter.hasNext()) {
+            val componentNameString = colonSplitter.next()
+            val enabledService = ComponentName.unflattenFromString(componentNameString)
+            if (enabledService != null && enabledService == expectedComponentName) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun isDeviceAdminActive(): Boolean {
+        val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = ComponentName(this, MdmDeviceAdminReceiver::class.java)
+        return dpm.isAdminActive(admin)
     }
 
     /** Periodically updates device info on screen (every 5 seconds). */
